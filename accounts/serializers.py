@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import User, RiderProfile, DriverProfile
+from .models import User, DriverProfile
 
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
@@ -39,8 +39,8 @@ class SignUpSerializer(serializers.Serializer):
         user.generate_otp()
         
         # Create profile based on user type
-        if user.user_type == 'rider':
-            RiderProfile.objects.create(user=user)
+        if user.user_type == 'user':
+            User.objects.create(user=user)
         elif user.user_type == 'driver':
             DriverProfile.objects.create(
                 user=user,
@@ -111,7 +111,7 @@ class RiderProfileSerializer(serializers.ModelSerializer):
     user = UserSerializer(read_only=True)
     
     class Meta:
-        model = RiderProfile
+        model = User
         fields = '__all__'
 
 class DriverProfileSerializer(serializers.ModelSerializer):
@@ -133,6 +133,6 @@ class SetupDriverProfileSerializer(serializers.Serializer):
     
     def validate_vehicle_number(self, value):
         # Check if vehicle number already exists
-        if DriverProfile.objects.filter(vehicle_number=value).exists():
+        if User.objects.filter(vehicle_number=value).exists():
             raise serializers.ValidationError("This vehicle number is already registered")
         return value

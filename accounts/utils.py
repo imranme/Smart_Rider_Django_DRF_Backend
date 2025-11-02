@@ -1,11 +1,12 @@
-import geopy.distance
-import pandas as pd
-import geopandas as gpd
+#import geopy.distance
+#import pandas as pd
+#import geopandas as gpd
 from rest_framework.views import exception_handler
-from uberClone.settings import blackListedTokens, idle_drivers
+# from uberClone.settings import blackListedTokens, idle_drivers
 from datetime import datetime, timedelta
 import jwt
 from django.conf import settings
+import math
 
 
 def generate_access_token(user):
@@ -69,7 +70,7 @@ def get_nearby_drivers(lat, lng, vehicle_type):
     nearby_drivers = driver_gdf_proj[~neighbours1.is_empty]
     nearby_drivers.drop('geometry', axis=1, inplace=True)
     nearby_drivers.drop('channel_name', axis=1, inplace=True)
-    distances = [geopy.distance.distance([lat, lng], [point['lat'], point['lng']]).meters for point in nearby_drivers.to_dict('records')]
+    #distances = [geopy.distance.distance([lat, lng], [point['lat'], point['lng']]).meters for point in nearby_drivers.to_dict('records')]
     distances = {k: v for k, v in enumerate(distances)}
     distances = dict(sorted(distances.items(), key=lambda item: item[1]))
     if len(list(distances.keys())) > 0:

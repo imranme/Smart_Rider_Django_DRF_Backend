@@ -1,138 +1,110 @@
-import uuid
-import random
 from django.db import models
+from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
+from django.core.exceptions import ValidationError
 from django.utils import timezone
-from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin, BaseUserManager
+from datetime import timedelta
+import random
 
 
-# ==========================
-# USER MANAGER
-# ==========================
 class UserManager(BaseUserManager):
     def create_user(self, email=None, phone=None, password=None, **extra_fields):
         if not email and not phone:
-            raise ValueError("User must provide either email or phone number.")
+            raise ValueError("Email or phone is required")
+        if email and phone:
+            raise ValueError("Only one of email or phone allowed")
+
         if email:
             email = self.normalize_email(email)
-        user = self.model(email=email, phone=phone, **extra_fields)
+            username = email
+        else:
+            username = phone
+
+        user = self.model(username=username, email=email, phone=phone, **extra_fields)
         user.set_password(password)
         user.save(using=self._db)
         return user
 
-    def create_superuser(self, email, password=None, **extra_fields):
+    def create_superuser(self, email=None, phone=None, password=None, **extra_fields):
         extra_fields.setdefault('is_staff', True)
         extra_fields.setdefault('is_superuser', True)
         extra_fields.setdefault('is_verified', True)
-        return self.create_user(email=email, password=password, **extra_fields)
+        extra_fields.setdefault('account_type', 'user')
 
+        return self.create_user(email=email, phone=phone, password=password, **extra_fields)
 
-# ==========================
-# USER MODEL
-# ==========================
 class User(AbstractBaseUser, PermissionsMixin):
     class AccountType(models.TextChoices):
-        REGULAR = 'R', 'Regular'
-        DRIVER = 'D', 'Driver'
+        USER = 'user', 'User'
+        DRIVER = 'driver', 'Driver'
 
-    class Gender(models.TextChoices):
-        MALE = 'M', 'Male'
-        FEMALE = 'F', 'Female'
+    class PaymentMethod(models.TextChoices):
+        CASH = 'cash', 'Cash'
+        CARD = 'credit_card', 'Credit Card'
 
-    public_id = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
-    name = models.CharField(max_length=150)
-    email = models.EmailField(unique=True, null=True, blank=True)
-    phone = models.CharField(max_length=20, unique=True, null=True, blank=True)
-    username = models.CharField(max_length=100, unique=True)
-    gender = models.CharField(max_length=1, choices=Gender.choices, null=True, blank=True)
-    account_type = models.CharField(max_length=1, choices=AccountType.choices, default=AccountType.REGULAR)
-    address = models.CharField(max_length=200, null=True, blank=True)
-    dob = models.DateField(null=True, blank=True)
-    about = models.TextField(null=True, blank=True)
+    # public_id = models.UUIDField(c default=uuid.uuid4, editable=False, unique=True)
+    username = models.CharField(max_length=150, unique=True)
+    full_name = models.CharField(max_length=100, blank=True)
+    email = models.EmailField(unique=True, blank=True, null=True)
+    phone = models.CharField(max_length=20, unique=True, blank=True, null=True)
+    account_type = models.CharField(max_length=10, choices=AccountType.choices, default=AccountType.USER)
 
     is_verified = models.BooleanField(default=False)
-    is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)
+    is_active = models.BooleanField(default=True)
     date_joined = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
 
-    USERNAME_FIELD = "username"
-    REQUIRED_FIELDS = ["email"]
+    otp_code = models.CharField(max_length=6, blank=True, null=True)
+    otp_created_at = models.DateTimeField(blank=True, null=True)
+
+    profile_picture = models.ImageField(upload_to='profiles/', blank=True, null=True)
+    id_number = models.CharField(max_length=50, unique=True, blank=True, null=True)
+    payment_method = models.CharField(max_length=20, choices=PaymentMethod.choices, blank=True, null=True)
+
+    license_photo = models.ImageField(upload_to='licenses/', blank=True, null=True)
+    car_photo = models.ImageField(upload_to='vehicles/', blank=True, null=True)
+    car_name = models.CharField(max_length=100, blank=True, null=True)
+    plate_number = models.CharField(max_length=20, blank=True, null=True)
 
     objects = UserManager()
+    USERNAME_FIELD = 'username'
+    REQUIRED_FIELDS = []
+
+    class Meta:
+        db_table = 'custom_user'
+
+    def clean(self):
+        if not self.email and not self.phone:
+            raise ValidationError("Email or phone required")
+        if self.email and self.phone:
+            raise ValidationError("Only one contact allowed")
+
+    def save(self, *args, **kwargs):
+        if not self.username:
+            self.username = self.email or self.phone
+        self.full_clean()
+        super().save(*args, **kwargs)
 
     def __str__(self):
-        return self.email or self.phone or self.username
+        return self.username
 
+    def generate_otp(self):
+        self.otp_code = str(random.randint(100000, 999999))
+        self.otp_created_at = timezone.now()
+        self.save(update_fields=['otp_code', 'otp_created_at'])
+        return self.otp_code
 
-# ==========================
-# OTP MODEL (Signup / Password Reset)
-# ==========================
-class UserOTP(models.Model):
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="otps")
-    otp_code = models.CharField(max_length=6)
-    purpose = models.CharField(
-        max_length=20,
-        choices=[
-            ("signup", "Signup Verification"),
-            ("reset", "Password Reset"),
-        ],
-    )
-    is_used = models.BooleanField(default=False)
-    created_at = models.DateTimeField(auto_now_add=True)
-    expires_at = models.DateTimeField()
+    def verify_otp(self, code):
+        if self.otp_code != code:
+            return False
+        if not self.otp_created_at:
+            return False
+        if timezone.now() > self.otp_created_at + timedelta(minutes=10):
+            return False
+        return True
 
-    def is_expired(self):
-        return timezone.now() > self.expires_at
-
-    @staticmethod
-    def generate_otp():
-        return str(random.randint(100000, 999999))
-
-    def __str__(self):
-        return f"OTP({self.user.username}) - {self.purpose}"
-
-
-# ==========================
-# VEHICLE MODEL
-# ==========================
-class Vehicle(models.Model):
-    class Type(models.TextChoices):
-        BIKE = 'BIKE', 'Bike'
-        CAR_SEDAN = 'SEDAN', 'Car Sedan'
-        CAR_SUV = 'SUV', 'Car SUV'
-        RIKSHAW = 'RIK', 'Rikshaw'
-        BUS = 'BUS', 'Bus'
-
-    vehicle_number = models.CharField(max_length=50, unique=True)
-    seat_capacity = models.IntegerField(null=True, blank=True)
-    mileage = models.FloatField(null=True, blank=True)
-    vehicle_type = models.CharField(max_length=10, choices=Type.choices, default=Type.CAR_SEDAN)
-    vehicle_photo = models.ImageField(upload_to='vehicles/', null=True, blank=True)
-
-    def __str__(self):
-        return f"{self.vehicle_type} - {self.vehicle_number}"
-
-
-# ==========================
-# DRIVER PROFILE MODEL
-# ==========================
-class DriverProfile(models.Model):
-    class VerificationStatus(models.TextChoices):
-        PENDING = 'P', 'Pending'
-        VERIFIED = 'V', 'Verified'
-        REJECTED = 'R', 'Rejected'
-
-    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='driver_profile')
-    license_number = models.CharField(max_length=50, null=True, blank=True)
-    license_photo = models.ImageField(upload_to='drivers/license/', null=True, blank=True)
-    vehicle = models.OneToOneField(Vehicle, on_delete=models.SET_NULL, null=True, blank=True)
-    payment_method = models.CharField(max_length=30, choices=[('cash', 'Cash'), ('card', 'Card')], default='cash')
-    verification_status = models.CharField(max_length=1, choices=VerificationStatus.choices, default=VerificationStatus.PENDING)
-    verified_at = models.DateTimeField(null=True, blank=True)
-
-    def mark_verified(self):
-        self.verification_status = self.VerificationStatus.VERIFIED
-        self.verified_at = timezone.now()
-        self.save()
-
-    def __str__(self):
-        return f"Driver: {self.user.name} ({self.get_verification_status_display()})"
+    def clear_otp(self):
+        self.otp_code = None
+        self.otp_created_at = None
+        self.is_verified = True
+        self.save(update_fields=['otp_code', 'otp_created_at', 'is_verified'])

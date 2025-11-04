@@ -1,220 +1,219 @@
-from django.shortcuts import render
-from rest_framework import status, generics, permissions
-from rest_framework.response import Response
+from rest_framework import status, permissions
 from rest_framework.views import APIView
+from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import get_user_model
-from .models import User, DriverProfile
+from django.core.mail import send_mail
+from django.conf import settings
+from django.core.cache import cache
+from django.utils import timezone
+from twilio.rest import Client
+import requests
+
 from .serializers import (
-    UserSerializer, SignUpSerializer, VerifyOTPSerializer,
-    LoginSerializer, ResendOTPSerializer, RiderProfileSerializer,
-    DriverProfileSerializer, SetupDriverProfileSerializer
+    UserRegistrationSerializer, UserLoginSerializer, ChangePasswordSerializer,
+    ForgotPasswordSerializer, ResetPasswordSerializer, SendOTPSerializer,
+    VerifyOTPSerializer, DeleteAccountSerializer, UserSerializer
 )
-# from .utils import send_otp_sms
 
 User = get_user_model()
 
-def get_tokens_for_user(user):
-    """Generate JWT tokens for user"""
-    refresh = RefreshToken.for_user(user)
-    return {
-        'refresh': str(refresh),
-        'access': str(refresh.access_token),
-    }
+def get_user_by_identifier(identifier):
+    if '@' in identifier:
+        return User.objects.filter(email=identifier).first()
+    else:
+        return User.objects.filter(phone=identifier).first()
 
-class SignUpView(APIView):
+def send_otp_verification(user, purpose='general'):
+    otp = user.otp_code
+    if user.phone:
+        try:
+            client = Client(settings.TWILIO_ACCOUNT_SID, settings.TWILIO_AUTH_TOKEN)
+            message = f"Your OTP: {otp}. Expires in 10 mins."
+            if purpose == 'password_reset':
+                message = f"Password reset OTP: {otp}"
+            elif purpose == 'deletion':
+                message = f"Delete account OTP: {otp}"
+            client.messages.create(
+                body=message,
+                from_=settings.TWILIO_PHONE_NUMBER,
+                to=user.phone
+            )
+            return True, "SMS sent"
+        except Exception as e:
+            return False, str(e)
+    elif user.email:
+        try:
+            subject = "Your OTP - Riding App"
+            message = f"Your OTP: {otp}. Expires in 10 mins."
+            if purpose == 'password_reset':
+                subject = "Password Reset OTP"
+            elif purpose == 'deletion':
+                subject = "Account Deletion OTP"
+            send_mail(subject, message, settings.DEFAULT_FROM_EMAIL, [user.email])
+            return True, "Email sent"
+        except Exception as e:
+            return False, str(e)
+    return False, "No contact"
+
+# ====================== VIEWS ======================
+
+class UserRegistrationView(APIView):
     permission_classes = [permissions.AllowAny]
-    
+
     def post(self, request):
-        serializer = SignUpSerializer(data=request.data)
+        serializer = UserRegistrationSerializer(data=request.data)
         if serializer.is_valid():
             user = serializer.save()
-            
-            # Send OTP via SMS (in development, just print it)
-            otp_sent = send_otp_sms(user.phone_number, user.otp)
-            
+            user.generate_otp()
+            user.save()
+
+            send_otp_verification(user)
+            print(f"OTP: {user.otp_code}")  # প্রোডাকশনে মুছে ফেলো
+
             return Response({
-                'message': 'User registered successfully. OTP sent to your phone.',
-                'phone_number': user.phone_number,
-                'otp': user.otp,  # Remove this in production!
-                'user_type': user.user_type
+                'message': 'Registered. OTP sent.',
+                'contact': user.phone or user.email,
+                'otp': user.otp_code if settings.DEBUG else None
             }, status=status.HTTP_201_CREATED)
-        
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
 
 class VerifyOTPView(APIView):
     permission_classes = [permissions.AllowAny]
-    
+
     def post(self, request):
         serializer = VerifyOTPSerializer(data=request.data)
         if serializer.is_valid():
-            user = serializer.validated_data['user']
-            
-            # Generate JWT tokens
-            tokens = get_tokens_for_user(user)
-            
+            contact = serializer.validated_data['contact']
+            otp = serializer.validated_data['otp']
+            user = get_user_by_identifier(contact)
+            if not user or not user.verify_otp(otp):
+                return Response({'error': 'Invalid OTP'}, status=status.HTTP_400_BAD_REQUEST)
+
+            user.is_verified = True
+            user.clear_otp()
+            user.save()
+
+            refresh = RefreshToken.for_user(user)
             return Response({
-                'message': 'Phone number verified successfully',
-                'tokens': tokens,
+                'message': 'Verified',
+                'access': str(refresh.access_token),
+                'refresh': str(refresh),
                 'user': UserSerializer(user).data
             }, status=status.HTTP_200_OK)
-        
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-class LoginView(APIView):
+
+class UserLoginView(APIView):
     permission_classes = [permissions.AllowAny]
-    
+
     def post(self, request):
-        serializer = LoginSerializer(data=request.data)
+        serializer = UserLoginSerializer(data=request.data)
         if serializer.is_valid():
             user = serializer.validated_data['user']
-            
-            # Generate JWT tokens
-            tokens = get_tokens_for_user(user)
-            
-            # Get profile data
-            profile_data = None
-            if user.user_type == 'rider':
-                profile = RiderProfile.objects.filter(user=user).first()
-                if profile:
-                    profile_data = RiderProfileSerializer(profile).data
-            elif user.user_type == 'driver':
-                profile = DriverProfile.objects.filter(user=user).first()
-                if profile:
-                    profile_data = DriverProfileSerializer(profile).data
-            
+            refresh = RefreshToken.for_user(user)
             return Response({
-                'message': 'Login successful',
-                'tokens': tokens,
-                'user': UserSerializer(user).data,
-                'profile': profile_data
+                'message': 'Login success',
+                'access': str(refresh.access_token),
+                'refresh': str(refresh),
+                'user': UserSerializer(user).data
             }, status=status.HTTP_200_OK)
-        
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-class ResendOTPView(APIView):
-    permission_classes = [permissions.AllowAny]
-    
-    def post(self, request):
-        serializer = ResendOTPSerializer(data=request.data)
-        if serializer.is_valid():
-            phone_number = serializer.validated_data['phone_number']
-            user = User.objects.get(phone_number=phone_number)
-            
-            # Generate new OTP
-            otp = user.generate_otp()
-            
-            # Send OTP via SMS
-            otp_sent = send_otp_sms(user.phone_number, otp)
-            
-            return Response({
-                'message': 'OTP resent successfully',
-                'otp': otp  # Remove this in production!
-            }, status=status.HTTP_200_OK)
-        
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-class ProfileView(APIView):
-    permission_classes = [permissions.IsAuthenticated]
-    
-    def get(self, request):
-        user = request.user
-        
-        # Get profile based on user type
-        profile_data = None
-        if user.user_type == 'rider':
-            profile = RiderProfile.objects.filter(user=user).first()
-            if profile:
-                profile_data = RiderProfileSerializer(profile).data
-        elif user.user_type == 'driver':
-            profile = DriverProfile.objects.filter(user=user).first()
-            if profile:
-                profile_data = DriverProfileSerializer(profile).data
-        
-        return Response({
-            'user': UserSerializer(user).data,
-            'profile': profile_data
-        }, status=status.HTTP_200_OK)
-    
-    def patch(self, request):
-        user = request.user
-        
-        # Update user information
-        user_serializer = UserSerializer(user, data=request.data, partial=True)
-        if user_serializer.is_valid():
-            user_serializer.save()
-        
-        # Update profile based on user type
-        profile_data = None
-        if user.user_type == 'rider':
-            profile = RiderProfile.objects.get(user=user)
-            profile_serializer = RiderProfileSerializer(profile, data=request.data, partial=True)
-            if profile_serializer.is_valid():
-                profile_serializer.save()
-                profile_data = profile_serializer.data
-        
-        elif user.user_type == 'driver':
-            profile = DriverProfile.objects.get(user=user)
-            profile_serializer = DriverProfileSerializer(profile, data=request.data, partial=True)
-            if profile_serializer.is_valid():
-                profile_serializer.save()
-                profile_data = profile_serializer.data
-        
-        return Response({
-            'message': 'Profile updated successfully',
-            'user': UserSerializer(user).data,
-            'profile': profile_data
-        }, status=status.HTTP_200_OK)
-
-class SetupDriverProfileView(APIView):
-    permission_classes = [permissions.IsAuthenticated]
-    
-    def post(self, request):
-        user = request.user
-        
-        if user.user_type != 'driver':
-            return Response({
-                'error': 'Only drivers can setup driver profile'
-            }, status=status.HTTP_403_FORBIDDEN)
-        
-        serializer = SetupDriverProfileSerializer(data=request.data)
-        if serializer.is_valid():
-            # Update driver profile
-            profile = DriverProfile.objects.get(user=user)
-            
-            for field, value in serializer.validated_data.items():
-                setattr(profile, field, value)
-            
-            profile.save()
-            
-            return Response({
-                'message': 'Driver profile setup completed',
-                'profile': DriverProfileSerializer(profile).data
-            }, status=status.HTTP_200_OK)
-        
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 class ChangePasswordView(APIView):
     permission_classes = [permissions.IsAuthenticated]
-    
+
+    def post(self, request):
+        serializer = ChangePasswordSerializer(data=request.data, context={'request': request})
+        if serializer.is_valid():
+            user = serializer.save()
+            user.last_password_change = timezone.now()
+            user.save()
+            return Response({'message': 'Password changed'}, status=status.HTTP_200_OK)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class ForgotPasswordView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        serializer = ForgotPasswordSerializer(data=request.data)
+        if serializer.is_valid():
+            contact = serializer.validated_data['contact']
+            user = get_user_by_identifier(contact)
+            if not user:
+                return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
+
+            user.generate_otp()
+            user.save()
+            send_otp_verification(user, 'password_reset')
+            return Response({
+                'message': 'OTP sent for reset',
+                'otp': user.otp_code if settings.DEBUG else None
+            }, status=status.HTTP_200_OK)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class ResetPasswordView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        serializer = ResetPasswordSerializer(data=request.data)
+        if serializer.is_valid():
+            contact = serializer.validated_data['contact']
+            otp = serializer.validated_data['otp']
+            password = serializer.validated_data['password']
+            user = get_user_by_identifier(contact)
+            if not user or not user.verify_otp(otp):
+                return Response({'error': 'Invalid OTP'}, status=status.HTTP_400_BAD_REQUEST)
+
+            user.set_password(password)
+            user.clear_otp()
+            user.save()
+            return Response({'message': 'Password reset'}, status=status.HTTP_200_OK)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class UserProfileView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        return Response(UserSerializer(request.user).data)
+
+    def patch(self, request):
+        serializer = UserSerializer(request.user, data=request.data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            return Response({'message': 'Updated', 'user': serializer.data})
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class DeleteAccountView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
     def post(self, request):
         user = request.user
-        old_password = request.data.get('old_password')
-        new_password = request.data.get('new_password')
-        
-        if not old_password or not new_password:
-            return Response({
-                'error': 'Both old and new passwords are required'
-            }, status=status.HTTP_400_BAD_REQUEST)
-        
-        if not user.check_password(old_password):
-            return Response({
-                'error': 'Old password is incorrect'
-            }, status=status.HTTP_400_BAD_REQUEST)
-        
-        user.set_password(new_password)
+        user.generate_otp()
         user.save()
-        
+        cache.set(f'delete_{user.id}', True, 600)
+        send_otp_verification(user, 'deletion')
         return Response({
-            'message': 'Password changed successfully'
-        }, status=status.HTTP_200_OK)
+            'message': 'OTP sent for deletion',
+            'otp': user.otp_code if settings.DEBUG else None
+        })
+
+
+class ConfirmDeleteView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        user = request.user
+        otp = request.data.get('otp')
+        if not user.verify_otp(otp):
+            return Response({'error': 'Invalid OTP'}, status=status.HTTP_400_BAD_REQUEST)
+
+        user.delete()
+        cache.delete(f'delete_{user.id}')
+        return Response({'message': 'Account deleted'})

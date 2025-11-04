@@ -1,138 +1,70 @@
 from rest_framework import serializers
-from .models import User, DriverProfile
+from .models import User
 
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = ['id', 'phone_number', 'email', 'full_name', 'user_type', 
-                  'profile_picture', 'is_verified', 'created_at']
-        read_only_fields = ['id', 'is_verified', 'created_at']
+        fields = ['public_id', 'username', 'full_name', 'email', 'phone', 'account_type',
+                  'is_verified', 'profile_picture', 'id_number', 'payment_method',
+                  'license_photo', 'car_photo', 'car_name', 'plate_number']
+        read_only_fields = ['public_id', 'is_verified']
 
-class SignUpSerializer(serializers.Serializer):
-    phone_number = serializers.CharField(max_length=15)
-    full_name = serializers.CharField(max_length=100, required=False)
-    email = serializers.EmailField(required=False)
-    user_type = serializers.ChoiceField(choices=['rider', 'driver'])
-    password = serializers.CharField(write_only=True, required=False)
-    
-    def validate_phone_number(self, value):
-        # Remove any spaces or special characters
-        phone = value.replace(' ', '').replace('-', '').replace('+', '')
-        
-        # Check if phone number already exists
-        if User.objects.filter(phone_number=phone).exists():
-            raise serializers.ValidationError("This phone number is already registered")
-        
-        return phone
-    
-    def create(self, validated_data):
-        phone_number = validated_data['phone_number']
-        password = validated_data.pop('password', None)
-        
-        user = User.objects.create_user(
-            phone_number=phone_number,
-            password=password,
-            **validated_data
-        )
-        
-        # Generate OTP
-        user.generate_otp()
-        
-        # Create profile based on user type
-        if user.user_type == 'user':
-            User.objects.create(user=user)
-        elif user.user_type == 'driver':
-            DriverProfile.objects.create(
-                user=user,
-                vehicle_type='car',
-                vehicle_model='',
-                vehicle_number='',
-                license_number=''
-            )
-        
-        return user
+class UserRegistrationSerializer(serializers.ModelSerializer):
+    contact = serializers.CharField()
+    password = serializers.CharField(write_only=True)
 
-class VerifyOTPSerializer(serializers.Serializer):
-    phone_number = serializers.CharField(max_length=15)
-    otp = serializers.CharField(max_length=6)
-    
-    def validate(self, data):
-        phone_number = data.get('phone_number')
-        otp = data.get('otp')
-        
-        try:
-            user = User.objects.get(phone_number=phone_number)
-        except User.DoesNotExist:
-            raise serializers.ValidationError("User not found")
-        
-        if not user.verify_otp(otp):
-            raise serializers.ValidationError("Invalid or expired OTP")
-        
-        data['user'] = user
-        return data
-
-class LoginSerializer(serializers.Serializer):
-    phone_number = serializers.CharField(max_length=15)
-    password = serializers.CharField(write_only=True, required=False)
-    
-    def validate(self, data):
-        phone_number = data.get('phone_number')
-        password = data.get('password')
-        
-        try:
-            user = User.objects.get(phone_number=phone_number)
-        except User.DoesNotExist:
-            raise serializers.ValidationError("User not found with this phone number")
-        
-        if not user.is_verified:
-            raise serializers.ValidationError("Please verify your phone number first")
-        
-        if password and not user.check_password(password):
-            raise serializers.ValidationError("Invalid password")
-        
-        if not user.is_active:
-            raise serializers.ValidationError("User account is disabled")
-        
-        data['user'] = user
-        return data
-
-class ResendOTPSerializer(serializers.Serializer):
-    phone_number = serializers.CharField(max_length=15)
-    
-    def validate_phone_number(self, value):
-        try:
-            user = User.objects.get(phone_number=value)
-        except User.DoesNotExist:
-            raise serializers.ValidationError("User not found")
-        
-        return value
-
-class RiderProfileSerializer(serializers.ModelSerializer):
-    user = UserSerializer(read_only=True)
-    
     class Meta:
         model = User
-        fields = '__all__'
+        fields = ['contact', 'password', 'full_name', 'account_type']
 
-class DriverProfileSerializer(serializers.ModelSerializer):
-    user = UserSerializer(read_only=True)
-    
-    class Meta:
-        model = DriverProfile
-        fields = '__all__'
-        
-class SetupDriverProfileSerializer(serializers.Serializer):
-    vehicle_type = serializers.ChoiceField(choices=['car', 'bike'])
-    vehicle_model = serializers.CharField(max_length=100)
-    vehicle_number = serializers.CharField(max_length=20)
-    vehicle_color = serializers.CharField(max_length=50, required=False)
-    license_number = serializers.CharField(max_length=50)
-    license_image = serializers.ImageField(required=False)
-    vehicle_registration = serializers.ImageField(required=False)
-    insurance_document = serializers.ImageField(required=False)
-    
-    def validate_vehicle_number(self, value):
-        # Check if vehicle number already exists
-        if User.objects.filter(vehicle_number=value).exists():
-            raise serializers.ValidationError("This vehicle number is already registered")
+    def create(self, validated_data):
+        contact = validated_data.pop('contact')
+        password = validated_data.pop('password')
+        if '@' in contact:
+            return User.objects.create_user(email=contact, password=password, **validated_data)
+        else:
+            return User.objects.create_user(phone=contact, password=password, **validated_data)
+
+class UserLoginSerializer(serializers.Serializer):
+    contact = serializers.CharField()
+    password = serializers.CharField()
+
+    def validate(self, data):
+        user = User.objects.filter(email=data['contact']).first() or User.objects.filter(phone=data['contact']).first()
+        if user and user.check_password(data['password']):
+            data['user'] = user
+            return data
+        raise serializers.ValidationError("Invalid credentials")
+
+class ChangePasswordSerializer(serializers.Serializer):
+    old_password = serializers.CharField()
+    new_password = serializers.CharField()
+
+    def validate_old_password(self, value):
+        if not self.context['request'].user.check_password(value):
+            raise serializers.ValidationError("Wrong password")
         return value
+
+    def save(self):
+        user = self.context['request'].user
+        user.set_password(self.validated_data['new_password'])
+        user.save()
+        return user
+
+class ForgotPasswordSerializer(serializers.Serializer):
+    contact = serializers.CharField()
+
+class ResetPasswordSerializer(serializers.Serializer):
+    contact = serializers.CharField()
+    otp = serializers.CharField()
+    password = serializers.CharField()
+
+class SendOTPSerializer(serializers.Serializer):
+    contact = serializers.CharField()
+
+class VerifyOTPSerializer(serializers.Serializer):
+    contact = serializers.CharField()
+    otp = serializers.CharField()
+
+class DeleteAccountSerializer(serializers.Serializer):
+    otp = serializers.CharField()

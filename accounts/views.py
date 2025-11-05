@@ -68,7 +68,7 @@ class UserRegistrationView(APIView):
             user.save()
 
             send_otp_verification(user)
-            print(f"OTP: {user.otp_code}")  # প্রোডাকশনে মুছে ফেলো
+            print(f"OTP: {user.otp_code}")  
 
             return Response({
                 'message': 'Registered. OTP sent.',

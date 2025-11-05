@@ -5,7 +5,6 @@ from django.utils import timezone
 from datetime import timedelta
 import random
 
-
 class UserManager(BaseUserManager):
     def create_user(self, email=None, phone=None, password=None, **extra_fields):
         if not email and not phone:

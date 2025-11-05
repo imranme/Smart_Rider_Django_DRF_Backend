@@ -1,8 +1,4 @@
-#import geopy.distance
-#import pandas as pd
-#import geopandas as gpd
 from rest_framework.views import exception_handler
-# from uberClone.settings import blackListedTokens, idle_drivers
 from datetime import datetime, timedelta
 import jwt
 from django.conf import settings

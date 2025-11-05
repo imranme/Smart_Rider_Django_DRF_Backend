@@ -1,4 +1,3 @@
-# accounts/serializers.py
 from rest_framework import serializers
 from django.contrib.auth.password_validation import validate_password
 from django.contrib.auth import get_user_model
@@ -125,9 +124,6 @@ class ResetPasswordSerializer(serializers.Serializer):
         return value
 
 
-# ------------------------------------------------------------------ #
-# 6. SEND OTP (General)
-# ------------------------------------------------------------------ #
 class SendOTPSerializer(serializers.Serializer):
     contact = serializers.CharField(max_length=100)
 
@@ -143,10 +139,6 @@ class SendOTPSerializer(serializers.Serializer):
         self.context['user'] = user
         return value
 
-
-# ------------------------------------------------------------------ #
-# 7. VERIFY OTP
-# ------------------------------------------------------------------ #
 class VerifyOTPSerializer(serializers.Serializer):
     contact = serializers.CharField(max_length=100)
     otp = serializers.CharField(max_length=6, min_length=6)
@@ -166,10 +158,6 @@ class VerifyOTPSerializer(serializers.Serializer):
         data['user'] = user
         return data
 
-
-# ------------------------------------------------------------------ #
-# 8. DELETE ACCOUNT (Confirm)
-# ------------------------------------------------------------------ #
 class DeleteAccountSerializer(serializers.Serializer):
     otp = serializers.CharField(max_length=6, min_length=6)
 
@@ -178,10 +166,6 @@ class DeleteAccountSerializer(serializers.Serializer):
             raise serializers.ValidationError("OTP must be numeric.")
         return value
 
-
-# ------------------------------------------------------------------ #
-# 9. USER SERIALIZER (For Response)
-# ------------------------------------------------------------------ #
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
@@ -197,7 +181,6 @@ class UserSerializer(serializers.ModelSerializer):
 
     def to_representation(self, instance):
         data = super().to_representation(instance)
-        # Hide sensitive fields
         if not instance.email:
             data.pop('email', None)
         if not instance.phone:

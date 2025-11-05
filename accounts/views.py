@@ -56,7 +56,6 @@ def send_otp_verification(user, purpose='general'):
             return False, str(e)
     return False, "No contact"
 
-# ====================== VIEWS ======================
 
 class UserRegistrationView(APIView):
     permission_classes = [permissions.AllowAny]
@@ -104,6 +103,11 @@ class VerifyOTPView(APIView):
             }, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+def get_user_by_identifier(identifier):
+    if '@' in identifier:
+        return User.objects.filter(email=identifier).first()
+    else:
+        return User.objects.filter(phone=identifier).first()
 
 class UserLoginView(APIView):
     permission_classes = [permissions.AllowAny]
@@ -216,4 +220,4 @@ class ConfirmDeleteView(APIView):
 
         user.delete()
         cache.delete(f'delete_{user.id}')
-        return Response({'message': 'Account deleted'})
+        return Response({'message': 'Account deleted'})  

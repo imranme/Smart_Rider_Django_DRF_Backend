@@ -74,7 +74,7 @@ class UserLoginSerializer(serializers.Serializer):
 
         if user and user.check_password(password):
             if not user.is_active:
-                raise serializers.ValidationError("Account is disabled.")
+                raise serializers.ValidationError("Account is not verified.")
             data['user'] = user
             return data
         raise serializers.ValidationError("Invalid credentials.")

@@ -11,6 +11,7 @@ urlpatterns = [
     path('profile/', views.UserProfileView.as_view()),#done
     path('delete-account/', views.DeleteAccountView.as_view()), #error
     path('confirm-delete/', views.ConfirmDeleteView.as_view()), #NOT WORKING
+    
 ]
 
 

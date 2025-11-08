@@ -14,10 +14,11 @@ from pathlib import Path
 from datetime import timedelta  
 import os
 from pathlib import Path
-import environ
+import environ 
 env = environ.Env()
 environ.Env.read_env()
 import environ
+
 
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -117,6 +118,11 @@ AUTH_PASSWORD_VALIDATORS = [
         'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator',
     },
 ]
+
+SIMPLE_JWT = {
+    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=30),   # default 5 min
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
+}
 
 
 # Internationalization

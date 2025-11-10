@@ -4,6 +4,7 @@ from django.core.exceptions import ValidationError
 from django.utils import timezone
 from datetime import timedelta
 import random
+from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
 
 class UserManager(BaseUserManager):
     def create_user(self, email=None, phone=None, password=None, **extra_fields):
@@ -39,6 +40,12 @@ class User(AbstractBaseUser, PermissionsMixin):
     class PaymentMethod(models.TextChoices):
         CASH = 'cash', 'Cash'
         CARD = 'credit_card', 'Credit Card'
+        
+    def get_contact(self):
+        return self.email or self.phone or "Unknown"
+
+    def __str__(self):
+        return self.get_contact()
 
     # public_id = models.UUIDField(c default=uuid.uuid4, editable=False, unique=True)
     username = models.CharField(max_length=150, unique=True)
@@ -107,3 +114,5 @@ class User(AbstractBaseUser, PermissionsMixin):
         self.otp_created_at = None
         self.is_verified = True
         self.save(update_fields=['otp_code', 'otp_created_at', 'is_verified'])
+         
+
